@@ -14,10 +14,11 @@ window.onload = function() {
 
 	// Initialize runtime control
 	var onSettingsLoaded = function() {
-		Behaviorlib.parseLib();
 		RC.ROS.trySetupConnection();
 	}
 
 	// Restore local settings (including statelib)
 	UI.Settings.restoreSettings(onSettingsLoaded);
+
+	UI.Feed.initialize();
 }

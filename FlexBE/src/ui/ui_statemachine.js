@@ -6,22 +6,49 @@ UI.Statemachine = new (function() {
 	var displayed_sm = undefined;
 	var selection_area = undefined;
 	var selection_set = undefined;
+	var pan_origin = {x: 0, y: 0};
+	var pan_shift = {x: 0, y: 0};
 
 	var drawings = [];
 	var drag_transition;
 	var previous_transition_end;
 	var connecting = false;
 	var selecting = false;
+	var allow_panning = false;
+	var panning = false;
 	var mouse_pos = undefined;
 	var background = undefined;
 	var dataflow_displayed = false;
 	var comments_displayed = true;
+	var outcomes_displayed = true;
 
 	var drawn_sms = [];
 	var grid = [];
 
-	Mousetrap.bind("shift", function() { displayGrid() }, 'keydown');
-	Mousetrap.bind("shift", function() { hideGrid() }, 'keyup');
+	Mousetrap.bind("shift", function() {
+		displayGrid();
+		background.attr({'cursor': 'move'});
+		allow_panning = true;
+	}, 'keydown');
+	Mousetrap.bind("shift", function() {
+		hideGrid();
+		background.attr({'cursor': 'auto'});
+		allow_panning = false;
+		panning = false;
+	}, 'keyup');
+
+	Mousetrap.bind("shift+space", function() {
+		if (allow_panning) {
+			hideGrid();
+			drawings.forEach(function(entry) {
+				if (entry.obj instanceof State && entry.obj.getStateClass() == ':CONTAINER') return;
+				var d = entry.drawing;
+				d.translate(-pan_shift.x, -pan_shift.y);
+			});
+			pan_shift = {x: 0, y: 0};
+			if (!panning) displayGrid();
+		}
+	});
 
 	var updateMousePos = function(event) {
 		var bnds = event.target.getBoundingClientRect();
@@ -38,10 +65,11 @@ UI.Statemachine = new (function() {
 
 	var displayGrid = function() {
 		var gridsize = UI.Settings.getGridsize();
-		for (var i = gridsize; i < R.width; i += gridsize) {
+		var offset = {x: UI.Statemachine.getPanShift().x % gridsize, y: UI.Statemachine.getPanShift().y % gridsize};
+		for (var i = offset.x; i < R.width; i += gridsize) {
 			grid.push(R.path("M" + i + ",0L" + i + "," + R.height).attr({stroke: '#ddd'}));
 		}
-		for (var i = gridsize; i < R.height; i += gridsize) {
+		for (var i = offset.y; i < R.height; i += gridsize) {
 			grid.push(R.path("M0," + i + "L" + R.width + "," + i).attr({stroke: '#ddd'}));
 		}
 	}
@@ -51,39 +79,70 @@ UI.Statemachine = new (function() {
 	}
 
 	var beginSelection = function(x, y, event) {
-		if (connecting) return;
-		selecting = true;
+		if (allow_panning) {
+			panning = true;
+			pan_origin.x = x;
+			pan_origin.y = y;
 
-		var mx = mouse_pos.attr("cx");
-		var my = mouse_pos.attr("cy");
+			that.removeSelection();
+			hideGrid();
 
-		selection_area.attr({opacity: 1, x: mx, y: my, width: 0, height: 0}).toFront();
+		} else {
+			if (connecting) return;
+			selecting = true;
+
+			var mx = mouse_pos.attr("cx");
+			var my = mouse_pos.attr("cy");
+
+			selection_area.attr({opacity: 1, x: mx, y: my, width: 0, height: 0}).toFront();
+		}
 	}
 	var updateSelection = function(dx, dy, x, y, event) {
-		if (!selecting) return;
+		if (panning) {
+			var shift = {x: x - pan_origin.x, y: y - pan_origin.y};
+			pan_shift.x += shift.x;
+			if (pan_shift.x > 0) {
+				pan_shift.x -= shift.x;
+				shift.x = 0;
+			}
+			pan_shift.y += shift.y;
+			if (pan_shift.y > 0) {
+				pan_shift.y -= shift.y;
+				shift.y = 0;
+			}
+			drawings.forEach(function(el) {
+				if (el.obj instanceof State && el.obj.getStateClass() == ':CONTAINER') return;
+				var d = el.drawing;
+				d.translate(shift.x, shift.y);
+			});
+			pan_origin.x = x;
+			pan_origin.y = y;
 
-		var xoffset = 0, yoffset = 0;
-		if (dx < 0) {
-			xoffset = dx;
-			dx = -1 * dx;
+		} 
+		if (selecting) {
+			var xoffset = 0, yoffset = 0;
+			if (dx < 0) {
+				xoffset = dx;
+				dx = -dx;
+			}
+			if (dy < 0) {
+				yoffset = dy;
+				dy = -dy;
+			}
+			selection_area.transform("T" + xoffset + "," + yoffset);
+			selection_area.attr({width: dx, height: dy});
 		}
-		if (dy < 0) {
-			yoffset = dy;
-			dy = -1 * dy;
-		}
-		selection_area.transform("T" + xoffset + "," + yoffset);
-		selection_area.attr({width: dx, height: dy});
 	}
 	var endSelection = function(event) {
+		if (panning) {
+			displayGrid();
+			panning = false;
+		}
 		if (!selecting) return;
 		selecting = false;
 
 		if (selection_area.attr("width") < 10 || selection_area.attr("height") < 10)
-			removeSelection();
-	}
-	var removeSelection = function() {
-		selecting = false;
-		selection_area.attr({x: 0, y: 0, width: 0, height: 0, opacity: 0});
+			that.removeSelection();
 	}
 
 	var beginSelectionMove = function() {
@@ -123,7 +182,7 @@ UI.Statemachine = new (function() {
 	}
 
 	var displaySMPath = function() {
-		return new Drawable.ContainerPath(displayed_sm, R, smDisplayHandler);
+		return new Drawable.ContainerPath(displayed_sm, R, smDisplayHandler, background.attr('fill'));
 	}
 
 	var smDisplayHandler = function() {
@@ -171,8 +230,18 @@ UI.Statemachine = new (function() {
 		if (UI.Menu.isPageStatemachine()) that.refreshView();
 	}
 
+	this.isDataflow = function() {
+		return dataflow_displayed;
+	}
+
 	this.toggleComments = function() {
 		comments_displayed = !comments_displayed;
+
+		if (UI.Menu.isPageStatemachine()) that.refreshView();
+	}
+
+	this.toggleOutcomes = function() {
+		outcomes_displayed = !outcomes_displayed;
 
 		if (UI.Menu.isPageStatemachine()) that.refreshView();
 	}
@@ -189,6 +258,10 @@ UI.Statemachine = new (function() {
 		return mouse_pos;
 	}
 
+	this.getPanShift = function() {
+		return pan_shift;
+	}
+
 	this.getAllDrawings = function() {
 		return drawings;
 	}
@@ -201,7 +274,8 @@ UI.Statemachine = new (function() {
 		displayed_sm = statemachine;
 		connecting = false;
 		drag_transition = undefined;
-		removeSelection();
+		that.removeSelection();
+		pan_shift = {x: 0, y: 0};
 
 		if (UI.Menu.isPageStatemachine()) that.refreshView();
 	}
@@ -209,6 +283,11 @@ UI.Statemachine = new (function() {
 	this.resetStatemachine = function() {
 		drawn_sms = [];
 		that.setDisplayedSM(Behavior.getStatemachine());
+	}
+	
+	this.removeSelection = function() {
+		selecting = false;
+		selection_area.attr({x: 0, y: 0, width: 0, height: 0, opacity: 0});
 	}
 
 	this.isConnecting = function() {
@@ -313,9 +392,8 @@ UI.Statemachine = new (function() {
 		drawings = [];
 
 		// draw
-		drawings.push(displaySMPath());
 		drawings.push(displayInitialDot());
-
+		
 		for (var i=0; i<states.length; ++i) {
 			var s = states[i];
 			var a = RC.Controller.isRunning() && RC.Controller.isCurrentState(s, true);
@@ -329,7 +407,7 @@ UI.Statemachine = new (function() {
 		}
 		for (var i=0; i<sm_outcomes.length; ++i) {
 			o = sm_outcomes[i];
-			var obj = new Drawable.Outcome(o, R, false);
+			var obj = new Drawable.Outcome(o, R, false, !outcomes_displayed);
 			drawings.push(obj);
 		}
 
@@ -339,7 +417,8 @@ UI.Statemachine = new (function() {
 		for (var i=0; i<transitions.length; ++i) {
 			var t = transitions[i];
 			if (t.getTo() == undefined) continue;
-			var dt = new Drawable.Transition(t, R, transitions_readonly, drawings, false, dataflow_displayed, Drawable.Transition.PATH_CURVE);
+			var draw_outline = dataflow_displayed || !outcomes_displayed && (t.getTo().getStateClass() == ":OUTCOME" || t.getTo().getStateClass() == ":CONDITION")
+			var dt = new Drawable.Transition(t, R, transitions_readonly, drawings, false, draw_outline, Drawable.Transition.PATH_CURVE);
 			new_transitions.forEach(function(ot) {
 				if (dt.obj.getFrom().getStateName() == ot.obj.getFrom().getStateName() && dt.obj.getTo().getStateName() == ot.obj.getTo().getStateName()) {
 					dt.merge(ot);
@@ -355,7 +434,19 @@ UI.Statemachine = new (function() {
 		if (dataflow_displayed) {
 			for (var i=0; i<dataflow.length; ++i) {
 				var d = dataflow[i];
-				var dt = new Drawable.Transition(d, R, true, drawings, false, false, Drawable.Transition.PATH_STRAIGHT, '#000');
+				var color = '#000';
+				if (d.getFrom().getStateName() == "INIT" && !displayed_sm.isInsideDifferentBehavior()) {
+					var available_userdata = (displayed_sm == Behavior.getStatemachine())?
+						Behavior.getDefaultUserdata().map(function(obj) { return obj.key; }) :
+						displayed_sm.getInputKeys();
+					if (!available_userdata.contains(d.getOutcome())) {
+						color = '#900';
+						d.setAutonomy(-1);
+					} else {
+						d.setAutonomy(0);
+					}
+				}
+				var dt = new Drawable.Transition(d, R, true, drawings, false, false, Drawable.Transition.PATH_STRAIGHT, color);
 				new_transitions.forEach(function(ot) {
 					if (dt.obj.getFrom().getStateName() == ot.obj.getFrom().getStateName() && dt.obj.getTo().getStateName() == ot.obj.getTo().getStateName()) {
 						dt.merge(ot);
@@ -385,6 +476,24 @@ UI.Statemachine = new (function() {
 		}
 		background.toBack();
 		selection_area.toFront();
+
+		drawings.push(displaySMPath());
+
+		// update menu button toggle state
+		if (UI.Menu.isPageStatemachine()) {
+			var dfgButton = document.getElementById("tool_button Data Flow Graph");
+			dfgButton.setAttribute("style", dataflow_displayed? "background: #ccc" : "");
+			var hocButton = document.getElementById("tool_button Fade Outcomes");
+			hocButton.setAttribute("style", !outcomes_displayed? "background: #ccc" : "");
+			var hcButton = document.getElementById("tool_button Hide Comments");
+			hcButton.setAttribute("style", !comments_displayed? "background: #ccc" : "");
+		}
+		// apply current pan shift
+		drawings.forEach(function(entry) {
+			if (entry.obj instanceof State && entry.obj.getStateClass() == ':CONTAINER') return;
+			var d = entry.drawing;
+			d.translate(pan_shift.x, pan_shift.y);
+		});
 	}
 
 	this.getDrawnState = function(state) {
@@ -397,7 +506,7 @@ UI.Statemachine = new (function() {
 
 	this.beginTransition = function(state, label) {
 		if (connecting) return;
-		removeSelection();
+		that.removeSelection();
 
 		var autonomy = 0;
 		var autonomy_index = state.getOutcomes().indexOf(label);
@@ -413,7 +522,7 @@ UI.Statemachine = new (function() {
 
 	this.beginInitTransition = function() {
 		if (connecting) return;
-		removeSelection();
+		that.removeSelection();
 
 		if (displayed_sm.getInitialState() != undefined) {
 			previous_transition_end = displayed_sm.getInitialState().getStateName();
@@ -428,6 +537,17 @@ UI.Statemachine = new (function() {
 		this.refreshView();
 	}
 
+	this.abortTransition = function() {
+		if (!connecting) return;
+
+		if (drag_transition == displayed_sm.getInitialTransition()) {
+			displayed_sm.setInitialState(displayed_sm.getStateByName(previous_transition_end));
+		}
+
+		connecting = false;
+		this.refreshView();
+	}
+
 	this.resetTransition = function(transition) {
 		if (connecting) return;
 		drag_transition = transition;
@@ -438,6 +558,10 @@ UI.Statemachine = new (function() {
 
 	this.connectTransition = function(state) {
 		if (!connecting) return;
+		if (displayed_sm.isConcurrent() 
+			&& state.getStateClass() != ':CONDITION' 
+			&& drag_transition.getFrom().getStateName() != "INIT") 
+			return;
 
 		var is_initial = drag_transition == displayed_sm.getInitialTransition();
 		var has_transition = displayed_sm.hasTransition(drag_transition);
@@ -454,6 +578,9 @@ UI.Statemachine = new (function() {
 			if (!has_transition) {
 				displayed_sm.addTransition(drag_transition);
 			}
+			if (displayed_sm.isConcurrent()) {
+				displayed_sm.tryDuplicateOutcome(state.getStateName().split('#')[0]);
+			}
 		} else {
 			displayed_sm.setInitialState(state);
 		}
@@ -464,7 +591,7 @@ UI.Statemachine = new (function() {
 		ActivityTracer.addActivity(ActivityTracer.ACT_TRANSITION,
 			is_initial?
 			"Set initial state to " + state.getStateName()
-			: "Connected outcome " + outcome + " of " + drag_transition.getFrom().getStateName() + " with " + state.getStateName(),
+			: "Connected outcome " + outcome + " of " + drag_transition.getFrom().getStateName() + " with " + state.getStateName().split('#')[0],
 			function() {
 				var container = (container_path == "")? Behavior.getStatemachine() : Behavior.getStatemachine().getStateByPath(container_path);
 				var target = container.getStateByName(undo_end);
@@ -487,7 +614,7 @@ UI.Statemachine = new (function() {
 			function() {
 				var container = (container_path == "")? Behavior.getStatemachine() : Behavior.getStatemachine().getStateByPath(container_path);
 				var target = container.getStateByName(redo_end);
-				if (target == undefined && container.getOutcomes().contains(redo_end)) target = container.getSMOutcomeByName(redo_end);
+				if (target == undefined && container.getOutcomes().contains(redo_end.split('#')[0])) target = container.getSMOutcomeByName(redo_end);
 				if (is_initial) {
 					container.setInitialState(target);
 				} else {

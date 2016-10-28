@@ -2,6 +2,7 @@ UI.Panels.StateProperties = new (function() {
 	var that = this;
 
 	var current_prop_state;
+	var apply_pulse = undefined;
 
 	var fadeOutBackground = function(id) {
 	 	document.getElementById(id).style.transition = "all 1s ease-out";
@@ -22,7 +23,7 @@ UI.Panels.StateProperties = new (function() {
 		el.addEventListener('mouseover', function() {
 			var rect = this.getBoundingClientRect();
 			var tt = document.createElement("div");
-			tt.setAttribute("style", "left: 710px; top: " + rect.top + "px; display: block;");
+			tt.setAttribute("style", "right: 370px; top: " + rect.top + "px; display: block;");
 			tt.setAttribute("class", "sidepanel_tooltip");
 			tt.setAttribute("id", "properties_tooltip");
 			tt.innerHTML = "";
@@ -107,6 +108,28 @@ UI.Panels.StateProperties = new (function() {
 		document.getElementById("label_prop_state_class").innerText = state.getStateClass();
 		document.getElementById("label_prop_state_desc").innerText = Statelib.getFromLib(state.getStateClass()).getStateDesc();
 
+		var highlight_apply_button = function() {
+			if (apply_pulse != undefined) return;
+			apply_button = document.getElementById("button_apply_properties");
+			apply_button.style.background = "#fd5";
+	 		
+	 		apply_button.style.transition = "all 0.25s ease-in";
+	 		is_on = false;
+
+	 		var border_pulse = function() {
+	 			if (is_on) {
+	 				apply_button.style.background = "black";
+	 				apply_button.style.color = "white";
+	 			} else {
+	 				apply_button.style.background = "white";
+	 				apply_button.style.color = "black";
+	 			}
+	 			apply_pulse = setTimeout(border_pulse, is_on? 300 : 700);
+	 			is_on = !is_on;
+			}
+			border_pulse();
+		}
+
 		params = state.getParameters();
 		values = state.getParameterValues();
 		if (params.length > 0) {
@@ -134,6 +157,9 @@ UI.Panels.StateProperties = new (function() {
 
 				input_field.addEventListener('blur', function() {
 					this.style.backgroundColor = Checking.isValidExpressionSyntax(this.value, false)? "initial" : "#fca";
+				});
+				input_field.addEventListener('change', function() {
+					highlight_apply_button();
 				});
 			}
 		} else {
@@ -176,6 +202,9 @@ UI.Panels.StateProperties = new (function() {
 				input_field.setAttribute("class", "inline_text_edit");
 				input_field.setAttribute("type", "text");
 				input_field.setAttribute("value", input_mapping[i]);
+				input_field.addEventListener('change', function() {
+					highlight_apply_button();
+				});
 
 				td_input.appendChild(input_field);
 				tr.appendChild(td_label);
@@ -205,6 +234,9 @@ UI.Panels.StateProperties = new (function() {
 				input_field.setAttribute("class", "inline_text_edit");
 				input_field.setAttribute("type", "text");
 				input_field.setAttribute("value", output_mapping[i]);
+				input_field.addEventListener('change', function() {
+					highlight_apply_button();
+				});
 
 				td_input.appendChild(input_field);
 				tr.appendChild(td_label);
@@ -228,6 +260,17 @@ UI.Panels.StateProperties = new (function() {
 
 		document.getElementById("input_prop_sm_name").value = state.getStateName();
 
+		if (state.isConcurrent()) {
+			document.getElementById("select_container_type").value = "concurrency";
+			document.getElementById("doc_container_type").innerHTML = "Parallel execution of all elements.";
+		} else if (state.isPriority()) {
+			document.getElementById("select_container_type").value = "priority";
+			document.getElementById("doc_container_type").innerHTML = "Execution supersedes all other containers.";
+		} else {
+			document.getElementById("select_container_type").value = "statemachine";
+			document.getElementById("doc_container_type").innerHTML = "Sequential execution based on outcomes.";
+		}
+
 		// Outcomes
 		//----------
 		document.getElementById("panel_prop_sm_outcomes_content").innerHTML = "";
@@ -237,10 +280,6 @@ UI.Panels.StateProperties = new (function() {
 
 			var input_field = document.createElement("td");
 			input_field.innerHTML = "<select class='select_box'>"
-				+"<option value='0' " + ((state.getAutonomy()[i] == 0)? "selected='selected'" : "") + " style='color: black;'>Off</option>"
-				+"<option value='1' " + ((state.getAutonomy()[i] == 1)? "selected='selected'" : "") + " style='color: blue;'>Low</option>"
-				+"<option value='2' " + ((state.getAutonomy()[i] == 2)? "selected='selected'" : "") + " style='color: green;'>High</option>"
-				+"<option value='3' " + ((state.getAutonomy()[i] == 3)? "selected='selected'" : "") + " style='color: red;'>Full</option>"
 				+"<option value='-1' " + ((state.getAutonomy()[i] == -1)? "selected='selected'" : "") + " style='color: gray; font-style: italic;'>Inherit</option>"
 				+"</select>";
 
@@ -251,6 +290,11 @@ UI.Panels.StateProperties = new (function() {
 			remove_button.setAttribute("style", "margin-left: 10px;");
 			remove_button.setAttribute("outcome", state.getOutcomes()[i]);
 			remove_button.addEventListener("click", function() {
+				if (RC.Controller.isReadonly()
+					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+					) return;
 				state.removeOutcome(this.getAttribute("outcome"));
 				var row = this.parentNode;
 				row.parentNode.removeChild(row);
@@ -279,8 +323,14 @@ UI.Panels.StateProperties = new (function() {
 			input_field.setAttribute("value", input_mapping[i]);
 			input_field.setAttribute("input_key", input_keys[i]);
 			input_field.addEventListener("blur", function() {
+				if (RC.Controller.isReadonly()
+					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+					) return;
 				var idx = state.getInputKeys().indexOf(this.getAttribute("input_key"));
 				state.getInputMapping()[idx] = this.value;
+				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 			});
 			var input_field_td = document.createElement("td");
 			input_field_td.appendChild(input_field);
@@ -293,11 +343,17 @@ UI.Panels.StateProperties = new (function() {
 			remove_button.setAttribute("style", "margin-left: 10px;");
 			remove_button.setAttribute("input_key", input_keys[i]);
 			remove_button.addEventListener("click", function() {
+				if (RC.Controller.isReadonly()
+					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+					) return;
 				var idx = state.getInputKeys().indexOf(this.getAttribute("input_key"));
 				state.getInputKeys().remove(this.getAttribute("input_key"));
 				state.getInputMapping().remove(state.getInputMapping()[idx]);
 				var row = this.parentNode;
 				row.parentNode.removeChild(row);
+				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 			});
 
 			var row = document.createElement("tr");
@@ -322,8 +378,14 @@ UI.Panels.StateProperties = new (function() {
 			input_field.setAttribute("value", output_mapping[i]);
 			input_field.setAttribute("output_key", output_keys[i]);
 			input_field.addEventListener("blur", function() {
+				if (RC.Controller.isReadonly()
+					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+					) return;
 				var idx = state.getOutputKeys().indexOf(this.getAttribute("output_key"));
 				state.getOutputMapping()[idx] = this.value;
+				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 			});
 			var input_field_td = document.createElement("td");
 			input_field_td.appendChild(input_field);
@@ -336,11 +398,17 @@ UI.Panels.StateProperties = new (function() {
 			remove_button.setAttribute("style", "margin-left: 10px;");
 			remove_button.setAttribute("output_key", output_keys[i]);
 			remove_button.addEventListener("click", function() {
+				if (RC.Controller.isReadonly()
+					|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+					|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+					|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+					) return;
 				var idx = state.getOutputKeys().indexOf(this.getAttribute("output_key"));
 				state.getOutputKeys().remove(this.getAttribute("output_key"));
 				state.getOutputMapping().remove(state.getOutputMapping()[idx]);
 				var row = this.parentNode;
 				row.parentNode.removeChild(row);
+				if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 			});
 
 			var row = document.createElement("tr");
@@ -370,10 +438,6 @@ UI.Panels.StateProperties = new (function() {
 			for (var i=0; i<outcome_list_complete.length; ++i) {
 				document.getElementById("panel_prop_be_autonomy_content").innerHTML += "<tr><td>" + outcome_list_complete[i] + ": </td>"
 					+"<td><select class='select_box'>"
-					+"<option value='0' " + ((autonomy_list_complete[i] == 0)? "selected='selected'" : "") + " style='color: black;'>Off</option>"
-					+"<option value='1' " + ((autonomy_list_complete[i] == 1)? "selected='selected'" : "") + " style='color: blue;'>Low</option>"
-					+"<option value='2' " + ((autonomy_list_complete[i] == 2)? "selected='selected'" : "") + " style='color: green;'>High</option>"
-					+"<option value='3' " + ((autonomy_list_complete[i] == 3)? "selected='selected'" : "") + " style='color: red;'>Full</option>"
 					+"<option value='-1' " + ((autonomy_list_complete[i] == -1)? "selected='selected'" : "") + " style='color: gray; font-style: italic;'>Inherit</option>"
 					+"</select></td></tr>";
 			}
@@ -398,8 +462,14 @@ UI.Panels.StateProperties = new (function() {
 				input_field.setAttribute("value", input_mapping[i]);
 				input_field.setAttribute("input_key", input_keys[i]);
 				input_field.addEventListener("blur", function() {
+					if (RC.Controller.isReadonly()
+						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+						) return;
 					var idx = state.getInputKeys().indexOf(this.getAttribute("input_key"));
 					state.getInputMapping()[idx] = this.value;
+					if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 				});
 				var input_field_td = document.createElement("td");
 				input_field_td.appendChild(input_field);
@@ -431,8 +501,14 @@ UI.Panels.StateProperties = new (function() {
 				input_field.setAttribute("value", output_mapping[i]);
 				input_field.setAttribute("output_key", output_keys[i]);
 				input_field.addEventListener("blur", function() {
+					if (RC.Controller.isReadonly()
+						|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+						|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+						|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+						) return;
 					var idx = state.getOutputKeys().indexOf(this.getAttribute("output_key"));
 					state.getOutputMapping()[idx] = this.value;
+					if (UI.Statemachine.isDataflow()) UI.Statemachine.refreshView();
 				});
 				var input_field_td = document.createElement("td");
 				input_field_td.appendChild(input_field);
@@ -456,12 +532,18 @@ UI.Panels.StateProperties = new (function() {
 		}
 		UI.Panels.setActivePanel(UI.Panels.STATE_PROPERTIES_PANEL);
 		document.activeElement.blur();
+		if (apply_pulse != undefined) clearTimeout(apply_pulse);
+		document.getElementById('button_apply_properties').style.background = "";
+		document.getElementById('button_apply_properties').style.color = "";
 	}
 
 	this.hide = function() {
 		UI.Panels.hidePanelIfActive(UI.Panels.STATE_PROPERTIES_PANEL);
 		current_prop_state = undefined;
 		document.activeElement.blur();
+		if (apply_pulse != undefined) clearTimeout(apply_pulse);
+		document.getElementById('button_apply_properties').style.background = "";
+		document.getElementById('button_apply_properties').style.color = "";
 	}
 
 	this.closePropertiesClicked = function() {
@@ -538,11 +620,13 @@ UI.Panels.StateProperties = new (function() {
 	}
 
 	this.openStatemachine = function() {
+		UI.Statemachine.abortTransition();
 		UI.Statemachine.setDisplayedSM(current_prop_state);
 		that.hide();
 	}
 
 	this.openBehavior = function() {
+		UI.Statemachine.abortTransition();
 		UI.Statemachine.setDisplayedSM(current_prop_state.getBehaviorStatemachine());
 		that.hide();
 	}
@@ -554,14 +638,20 @@ UI.Panels.StateProperties = new (function() {
 			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
 			) {
 
-			document.getElementById('button_apply_properties').style.transition = "none";
-			document.getElementById('button_apply_properties').style.background = "#f63";
-			window.setTimeout(function() { fadeOutBackground('button_apply_properties'); }, 100);
+			window.setTimeout(function() {
+				document.getElementById('button_apply_properties').style.transition = "none";
+				document.getElementById('button_apply_properties').style.background = "#f63";
+			}, 100);
+			window.setTimeout(function() {
+				fadeOutBackground('button_apply_properties');
+			}, 200);
 			that.displayStateProperties(current_prop_state);
 			return;
 		}
-		document.getElementById('button_apply_properties').style.transition = "none";
-		document.getElementById('button_apply_properties').style.background = "#9f7";
+		if (apply_pulse != undefined) {
+			clearTimeout(apply_pulse);
+			apply_pulse = undefined;
+		}
 
 		var autonomy_old = current_prop_state.getAutonomy().clone();
 		var input_old = current_prop_state.getInputMapping().clone();
@@ -604,7 +694,14 @@ UI.Panels.StateProperties = new (function() {
 
 		var state_path = current_prop_state.getStatePath();
 
-		window.setTimeout(function() { fadeOutBackground('button_apply_properties'); }, 100);
+
+		window.setTimeout(function() {
+			document.getElementById('button_apply_properties').style.transition = "none";
+			document.getElementById('button_apply_properties').style.background = "#9f7";
+		}, 100);
+		window.setTimeout(function() {
+			fadeOutBackground('button_apply_properties');
+		}, 200);
 		UI.Statemachine.refreshView();
 
 		UI.Panels.StateProperties.displayStateProperties(current_prop_state);
@@ -718,37 +815,205 @@ UI.Panels.StateProperties = new (function() {
 
 	this.addSMOutcome = function() {
 		if (document.getElementById("input_prop_outcome_add").value == "") return;
-		if (RC.Controller.isReadonly() || UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()) return;
+		if (RC.Controller.isReadonly()
+			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+			) return;
 
-		current_prop_state.addOutcome(document.getElementById("input_prop_outcome_add").value);
+		var container_path = current_prop_state.getStatePath();
+		var new_outcome = document.getElementById("input_prop_outcome_add").value;
+		current_prop_state.addOutcome(new_outcome);
 
 		document.getElementById("input_prop_outcome_add").value = "";
 		UI.Statemachine.refreshView();
 		displayPropertiesForStatemachine(current_prop_state);
+
+		ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+			"Added outcome to container " + current_prop_state.getStateName(),
+			function() { // undo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				container.removeOutcome(new_outcome);
+				UI.Statemachine.refreshView();
+				if (container == current_prop_state)
+					displayPropertiesForStatemachine(current_prop_state);
+			},
+			function() { // redo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				container.addOutcome(new_outcome);
+				UI.Statemachine.refreshView();
+				if (container == current_prop_state)
+					displayPropertiesForStatemachine(current_prop_state);
+			}
+		);
 	}
 
 	this.addSMInputKey = function() {
 		if (document.getElementById("input_prop_input_key_add").value == "") return;
-		if (RC.Controller.isReadonly() || UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()) return;
+		if (RC.Controller.isReadonly()
+			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+			) return;
 
-		current_prop_state.getInputKeys().push(document.getElementById("input_prop_input_key_add").value);
-		current_prop_state.getInputMapping().push(document.getElementById("input_prop_input_key_add").value);
+		var container_path = current_prop_state.getStatePath();
+		var new_input_key = document.getElementById("input_prop_input_key_add").value;
+		current_prop_state.getInputKeys().push(new_input_key);
+		current_prop_state.getInputMapping().push(new_input_key);
 
 		document.getElementById("input_prop_input_key_add").value = "";
-		UI.Statemachine.refreshView();
+		if (UI.Statemachine.isDataflow()) 
+			UI.Statemachine.refreshView();
 		displayPropertiesForStatemachine(current_prop_state);
+
+		ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+			"Added input key to container " + current_prop_state.getStateName(),
+			function() { // undo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				var idx = container.getInputKeys().indexOf(new_input_key);
+				container.getInputKeys().splice(idx, 1);
+				container.getInputMapping().splice(idx, 1);
+				if (UI.Statemachine.isDataflow()) 
+					UI.Statemachine.refreshView();
+				if (container == current_prop_state)
+					displayPropertiesForStatemachine(current_prop_state);
+			},
+			function() { // redo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				container.getInputKeys().push(new_input_key);
+				container.getInputMapping().push(new_input_key);
+				if (UI.Statemachine.isDataflow()) 
+					UI.Statemachine.refreshView();
+				if (container == current_prop_state)
+					displayPropertiesForStatemachine(current_prop_state);
+			}
+		);
 	}
 
 	this.addSMOutputKey = function() {
 		if (document.getElementById("input_prop_output_key_add").value == "") return;
-		if (RC.Controller.isReadonly() || UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()) return;
+		if (RC.Controller.isReadonly()
+			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+			) return;
 
-		current_prop_state.getOutputKeys().push(document.getElementById("input_prop_output_key_add").value);
-		current_prop_state.getOutputMapping().push(document.getElementById("input_prop_output_key_add").value);
+		var container_path = current_prop_state.getStatePath();
+		var new_output_key = document.getElementById("input_prop_output_key_add").value;
+		current_prop_state.getOutputKeys().push(new_output_key);
+		current_prop_state.getOutputMapping().push(new_output_key);
 
 		document.getElementById("input_prop_output_key_add").value = "";
-		UI.Statemachine.refreshView();
+		if (UI.Statemachine.isDataflow()) 
+			UI.Statemachine.refreshView();
 		displayPropertiesForStatemachine(current_prop_state);
+
+		ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+			"Added output key to container " + current_prop_state.getStateName(),
+			function() { // undo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				var idx = container.getOutputKeys().indexOf(new_input_key);
+				container.getOutputKeys().splice(idx, 1);
+				container.getOutputMapping().splice(idx, 1);
+				if (UI.Statemachine.isDataflow()) 
+					UI.Statemachine.refreshView();
+				if (container == current_prop_state)
+					displayPropertiesForStatemachine(current_prop_state);
+			},
+			function() { // redo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				container.getOutputKeys().push(new_input_key);
+				container.getOutputMapping().push(new_input_key);
+				if (UI.Statemachine.isDataflow()) 
+					UI.Statemachine.refreshView();
+				if (container == current_prop_state)
+					displayPropertiesForStatemachine(current_prop_state);
+			}
+		);
+	}
+
+	this.containerTypeChanged = function(evt) {
+		if(RC.Controller.isReadonly()
+			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+			) return;
+		
+		var select_box = this;
+
+		var changeType = function(container, to, concurrent, priority) {
+			select_box.value = to;
+			if (to == 'concurrency') {
+				container.setConcurrent(true);
+				container.setPriority(false);
+				document.getElementById("doc_container_type").innerHTML = "Parallel execution of all elements.";
+			} else if (to == 'priority') {
+				if (concurrent) {
+					container.setConcurrent(false);
+				}
+				container.setPriority(true);
+				document.getElementById("doc_container_type").innerHTML = "Execution supersedes all other containers.";
+			} else {
+				if (concurrent) {
+					container.setConcurrent(false);
+				}
+				container.setPriority(false);
+				document.getElementById("doc_container_type").innerHTML = "Sequential execution based on outcomes.";
+			}
+		}
+
+		var prev_concurrent = current_prop_state.isConcurrent();
+		var prev_priority = current_prop_state.isPriority();
+		var prev_type = prev_concurrent? 'concurrency' :
+						prev_priority? 'priority' :
+						'statemachine';
+		var new_type = this.value;
+
+		var container_path = current_prop_state.getStatePath();
+		var transitions = current_prop_state.getTransitions().clone();
+		var initial_name = current_prop_state.getInitialState() != undefined?
+			current_prop_state.getInitialState().getStateName() :
+			"";
+		var old_sm_outcomes = current_prop_state.getSMOutcomes();
+
+		changeType(current_prop_state, new_type, prev_concurrent, prev_priority);
+		UI.Statemachine.refreshView();
+
+		var new_concurrent = current_prop_state.isConcurrent();
+		var new_priority = current_prop_state.isPriority();
+
+		ActivityTracer.addActivity(ActivityTracer.ACT_STATE_CHANGE,
+			"Changed container " + current_prop_state.getStateName() + " from " + prev_type + " to " + new_type,
+			function() { // undo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				changeType(container, prev_type, new_concurrent, new_priority);
+				if (new_concurrent != prev_concurrent) {
+					container.setSMOutcomes(old_sm_outcomes);
+					transitions.forEach(function(t) {
+						if (t.getOutcome() == "" && t.getFrom().getStateName() == "INIT") {
+							var old_target = t.getTo();
+							if (initial_name != "") {
+								container.setInitialState(container.getStateByName(initial_name));
+							}
+						} else {
+							t.setFrom(container.getStateByName(t.getFrom().getStateName()));
+							var target = container.getStateByName(t.getTo().getStateName());
+							if (target == undefined) {
+								target = container.getSMOutcomeByName(t.getTo().getStateName());
+							}
+							t.setTo(target);
+							container.addTransition(t);
+						}
+					});
+				}
+				UI.Statemachine.refreshView();
+			},
+			function() { // redo
+				var container = Behavior.getStatemachine().getStateByPath(container_path);
+				changeType(container, new_type, prev_concurrent, prev_priority);
+				UI.Statemachine.refreshView();
+			}
+		);
 	}
 
 	this.displaySynthesisClicked = function(evt) {
@@ -769,10 +1034,24 @@ UI.Panels.StateProperties = new (function() {
 	}
 
 	this.synthesizeClicked = function() {
-		var initial_condition_list = document.getElementById('input_prop_synthesis_initial').value.replace(/ /g, "").split(",");
-		var goal_list = document.getElementById('input_prop_synthesis_goal').value.replace(/ /g, "").split(",");
+		if(RC.Controller.isReadonly()
+			|| UI.Statemachine.getDisplayedSM().isInsideDifferentBehavior()
+			|| RC.Controller.isLocked() && RC.Controller.isStateLocked(current_prop_state.getStatePath())
+			|| RC.Controller.isOnLockedPath(current_prop_state.getStatePath())
+			) return;
+		var initial_condition = document.getElementById('input_prop_synthesis_initial').value;
+		var goal = document.getElementById('input_prop_synthesis_goal').value;
+		document.getElementById("cb_display_synthesis").checked = false;
+		document.getElementById('panel_prop_sm_synthesis').style.display = "none";
 
-		RC.PubSub.requestBehaviorSynthesis(current_prop_state.getStatePath(), "atlas", goal_list, initial_condition_list, current_prop_state.getOutcomes(),
+		UI.Statemachine.abortTransition();
+
+		RC.PubSub.requestBehaviorSynthesis(
+			current_prop_state.getStatePath(),
+			UI.Settings.getSynthesisSystem(),
+			goal,
+			initial_condition,
+			current_prop_state.getOutcomes(),
 			function(result) {
 				document.getElementById('label_synthesis_feedback').value = "This will delete the current content!";
 				document.getElementById('panel_prop_sm_synthesis').style.display = "none";

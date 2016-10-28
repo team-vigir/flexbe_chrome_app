@@ -20,6 +20,7 @@ UI.RuntimeControl = new (function() {
 
 	var locked_state_path = "";
 
+	var pause_behavior_toggle = true;
 	var sync_ext_toggle = false;
 
 	var updateDrawing = function() {
@@ -140,8 +141,8 @@ UI.RuntimeControl = new (function() {
 			return drawable;
 		}
 
-		if (state_obj.getStateClass() == ":OUTCOME")
-			return new Drawable.Outcome(state_obj, R, true);
+		if (state_obj.getStateClass() == ":OUTCOME" || state_obj.getStateClass() == ":CONDITION")
+			return new Drawable.Outcome(state_obj, R, true, false);
 
 		return new Drawable.State(state_obj, R, true, mode, active, locked);
 	}
@@ -312,51 +313,35 @@ UI.RuntimeControl = new (function() {
 			} else if (params[i].type == "yaml") {
 				var add_button = document.createElement("input");
 				add_button.setAttribute("type", "button");
-				add_button.setAttribute("value", "Add .yaml");
+				add_button.setAttribute("value", "...");
 				add_button.addEventListener('click', function() {
 					var button = this;
 					chrome.fileSystem.chooseEntry({type: 'openFile'}, function(entry) {
-						var name = Filesystem.getFileName(entry.name, false);
-						var displayname = (name.length > 28)? name.slice(0,25) + "..." : name;
-						var opt = document.createElement("option");
-						opt.setAttribute("value", chrome.fileSystem.retainEntry(entry));
-						opt.setAttribute("title", name);
-						opt.innerHTML = displayname;
-						button.parentNode.parentNode.children[2].children[0].appendChild(opt);
+						button.parentNode.parentNode.children[0].children[0].setAttribute("value", entry.name);
 					});
 				});
 
-				var select = document.createElement("select");
-				select.setAttribute("name", params[i].name);
-				select.setAttribute("key", params[i].additional.key);
+				var file_input = document.createElement("input");
+				file_input.setAttribute("type", "text");
+				file_input.setAttribute("value", params[i].default);
+				file_input.setAttribute("key", params[i].additional.key);
+				file_input.setAttribute("style", "width: 300px");
 
-				var rmv_button = document.createElement("input");
-				rmv_button.setAttribute("type", "button");
-				rmv_button.setAttribute("value", "Remove");
-				rmv_button.addEventListener('click', function() {
-					var select = this.parentNode.parentNode.children[2].children[0];
-					select.options[select.selectedIndex].remove();
-				});
-
+				var file_td = document.createElement("td");
+				file_td.appendChild(file_input);
 				var add_td = document.createElement("td");
 				add_td.appendChild(add_button);
 				var key_label_td = document.createElement("td");
-				key_label_td.innerHTML = "(key: " + params[i].additional.key + ")&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;";
-				var select_td = document.createElement("td");
-				select_td.appendChild(select);
-				var rmv_td = document.createElement("td");
-				rmv_td.appendChild(rmv_button);
+				key_label_td.innerHTML = (params[i].additional.key != "")? "(key: " + params[i].additional.key + ")" : "";
 
 				var yaml_tr = document.createElement("tr");
-				yaml_tr.appendChild(add_td);
+				yaml_tr.appendChild(file_td);
+				//yaml_tr.appendChild(add_td);
 				yaml_tr.appendChild(key_label_td);
-				yaml_tr.appendChild(select_td);
-				yaml_tr.appendChild(rmv_td);
 				var yaml_table = document.createElement("table");
 				yaml_table.appendChild(yaml_tr);
 				value_td.appendChild(yaml_table);
 			}
-			value_td
 
 			var hint_td = document.createElement("td");
 			hint_td.setAttribute("width", "25%");
@@ -414,36 +399,10 @@ UI.RuntimeControl = new (function() {
 				result.push({name: name, value: value});
 				checkResult();
 			} else if (type == "yaml") {
-				var list = c.children[1].children[0].children[0].children[2].children[0].options;
-				var key = c.children[1].children[0].children[0].children[2].children[0].getAttribute("key");
-				var value_list = [];
-				var yamlsToGo = list.length;
-				var checkYamlResult = function(yn, tg, vl) {
-					tg -= 1;
-					if (tg == 0) {
-						result.push({name: yn, value: vl.join(", ")});
-						checkResult();
-					}
-				}
-				var inner_loop = function(yaml_name, list, key, value_list, yamlsToGo) {
-					for (var j=0; j<list.length; j++) {
-						chrome.fileSystem.restoreEntry(list[j].value, function(entry) {
-							Filesystem.readFile(entry, function(content) {
-								var yaml_obj = YAML.parse(content);
-								var yaml_value = yaml_obj[key];
-								if (yaml_value == undefined) {
-									T.logWarn("Key " + key + " not found in " + entry.filename + "!");
-									return;
-								} else if (yaml_value instanceof Array) {
-									yaml_value = yaml_value.join(", ");
-								}
-								value_list.push(yaml_value);
-								checkYamlResult(yaml_name, yamlsToGo, value_list);
-							});
-						});
-					}
-				}
-				inner_loop(name, list, key, value_list, yamlsToGo);
+				value = c.children[1].children[0].children[0].children[0].children[0].value;
+				var key = c.children[1].children[0].children[0].children[0].children[0].getAttribute('key');
+				result.push({name: "YAML:" + name, value: value + ":" + key});
+				checkResult();
 			}
 		}
 	}
@@ -457,6 +416,7 @@ UI.RuntimeControl = new (function() {
 
 	var hideDisplays = function() {
 		document.getElementById("runtime_configuration_display").style.display = "none";
+		document.getElementById("runtime_external_display").style.display = "none";
 		document.getElementById("runtime_waiting_display").style.display = "none";
 		document.getElementById("runtime_offline_display").style.display = "none";
 		document.getElementById("runtime_no_behavior_display").style.display = "none";
@@ -539,6 +499,14 @@ UI.RuntimeControl = new (function() {
 		});
 	}
 
+	this.attachExternalClicked = function() {
+		var selection_box = document.getElementById("selection_rc_autonomy");
+		var autonomy_level = parseInt(selection_box.options[selection_box.selectedIndex].value);
+		RC.PubSub.sendAttachBehavior(autonomy_level);
+
+		UI.RuntimeControl.displayBehaviorFeedback(4, "Attaching to behavior...");
+	}
+
 	this.behaviorLockClicked = function() {
 		if (!RC.Controller.isRunning()) return;
 
@@ -572,6 +540,40 @@ UI.RuntimeControl = new (function() {
 		//UI.RuntimeControl.displayBehaviorFeedback(4, "Changed autonomy to: " + ["No","Low","High","Full"][value]);
 	}
 
+	this.repeatBehaviorClicked = function() {
+		if (!RC.Controller.isRunning()) return;
+
+		RC.PubSub.sendRepeatBehavior();
+	}
+
+	this.pauseBehaviorClicked = function() {
+		if (!RC.Controller.isRunning()) return;
+		document.getElementById("button_behavior_pause").setAttribute("disabled", "disabled");
+
+		if (pause_behavior_toggle) {
+			RC.PubSub.sendPauseBehavior();
+		} else {
+			RC.PubSub.sendResumeBehavior();
+		}
+	}
+
+	this.switchPauseButton = function() {
+		pause_behavior_toggle = !pause_behavior_toggle;
+		document.getElementById("button_behavior_pause").removeAttribute("disabled", "disabled");
+
+		if (pause_behavior_toggle) {
+			document.getElementById("button_behavior_pause").setAttribute("value", "Pause");
+		} else {
+			document.getElementById("button_behavior_pause").setAttribute("value", "Resume");
+		}
+	}
+
+	this.resetPauseButton = function() {
+		pause_behavior_toggle = true;
+		document.getElementById("button_behavior_pause").removeAttribute("disabled", "disabled");
+		document.getElementById("button_behavior_pause").setAttribute("value", "Pause");
+	}
+
 	this.preemptBehaviorClicked = function() {
 		if (!RC.Controller.isConnected()) return;
 
@@ -579,16 +581,16 @@ UI.RuntimeControl = new (function() {
 		UI.RuntimeControl.displayBehaviorFeedback(4, "Stopping behavior...");
 		document.getElementById("cb_allow_preempt").checked = false;
 		document.getElementById("button_behavior_preempt").setAttribute("disabled", "disabled");
-		document.getElementById("button_behavior_preempt").style.color = "gray"
+		document.getElementById("button_behavior_preempt").style.color = "gray";
 	}
 
 	this.allowPreemptClicked = function(evt) {
 		if(evt.target.checked) {
 			document.getElementById("button_behavior_preempt").removeAttribute("disabled", "disabled");
-			document.getElementById("button_behavior_preempt").style.color = "red"
+			document.getElementById("button_behavior_preempt").style.color = "red";
 		} else {
 			document.getElementById("button_behavior_preempt").setAttribute("disabled", "disabled");
-			document.getElementById("button_behavior_preempt").style.color = "gray"
+			document.getElementById("button_behavior_preempt").style.color = "gray";
 		}
 	}
 
@@ -683,6 +685,11 @@ UI.RuntimeControl = new (function() {
 		document.getElementById("runtime_waiting_display").style.display = "inline";
 	}
 
+	this.displayExternalBehavior = function() {
+		hideDisplays();
+		document.getElementById("runtime_external_display").style.display = "inline";
+	}
+
 	this.displayEngineOffline = function() {
 		hideDisplays();
 		document.getElementById("runtime_offline_display").style.display = "inline";
@@ -717,17 +724,25 @@ UI.RuntimeControl = new (function() {
 		} else {
 			lock_button.removeAttribute("disabled");
 			// collect containers but skip top-level container (behavior)
+			var options = [];
 			for(var i=current_states.length-1; i>0; i--) {
 				var option = document.createElement("option");
 				if (i == current_level) {
+					option.setAttribute("selected", "selected");
+				}
+				if (current_states[i] instanceof Statemachine && current_states[i].isConcurrent()) {
+					options = [];
 					option.setAttribute("selected", "selected");
 				}
 				option.setAttribute("path", current_states[i].getStatePath());
 				var txt = current_states[i].getStateName();
 				option.setAttribute("title", txt);
 				option.text = ((txt.length > 18)? txt.slice(0,15) + "..." : txt);
-				selection_box.add(option);
+				options.push(option);
 			}
+			options.forEach(function(option) {
+				selection_box.add(option);
+			});
 		}
 
 		var label_td = document.createElement("td");
@@ -833,11 +848,24 @@ UI.RuntimeControl = new (function() {
 
 	this.displayBehaviorFeedback = function(level, text) {
 		var color = "black";
+		var collapse = UI.Settings.isCollapseInfo();
 		switch(level) {
-			case 1: color = "orange"; break;
-			case 2: color = "navy"; break;
-			case 3: color = "red"; break;
-			case 4: color = "green"; break;
+			case 1:
+				color = "orange";
+				collapse = UI.Settings.isCollapseWarn();
+				break;
+			case 2:
+				color = "navy";
+				collapse = UI.Settings.isCollapseHint();
+				break;
+			case 3:
+				color = "red";
+				collapse = UI.Settings.isCollapseError();
+				break;
+			case 4:
+				color = "green";
+				collapse = false;
+				break;
 		}
 		var currentdate = new Date(); 
 		var time = currentdate.toLocaleTimeString();
@@ -869,11 +897,12 @@ UI.RuntimeControl = new (function() {
 			entry_body.style.color = color;
 			entry_body.style.opacity = "0.8";
 			entry_body.innerHTML = text_body;
+			entry_body.style.display = collapse? "none" : "";
 
 			entry_toggle = document.createElement("font");
 			entry_toggle.style.cursor = "pointer";
-			entry_toggle.innerHTML = " [-]";
-			entry_toggle.title = "hide details";
+			entry_toggle.innerHTML = collapse? " [+]" : " [-]";
+			entry_toggle.title = collapse? "show details" : "hide details";
 			entry_toggle.addEventListener("click", function() {
 				if (entry_toggle.innerHTML == " [-]") {
 					entry_toggle.innerHTML = " [+]";

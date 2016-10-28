@@ -4,8 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var onEnterFocusChange = function (cb, id) { return onEnter(function() { cb(); document.getElementById(id).focus(); }); };
 
 // General
-    document.getElementById('devbanner').addEventListener('mouseenter', UI.Menu.expandDevbanner);
-    document.getElementById('devbanner').addEventListener('mouseleave', UI.Menu.shrinkDevbanner);
+    document.getElementById('flexbe_about').addEventListener('click', UI.Feed.showAbout);
 
     document.getElementById('button_to_db').addEventListener('click', UI.Menu.toDashboardClicked);
     document.getElementById('button_to_sm').addEventListener('click', UI.Menu.toStatemachineClicked);
@@ -45,6 +44,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('input_db_userdata_value_add').addEventListener('keyup', onEnterFocusChange(UI.Dashboard.addDefaultUserdataClicked, 'input_db_userdata_key_add'));
 
     document.getElementById('button_db_parameter_add').addEventListener('click', UI.Dashboard.addParameterClicked);
+    document.getElementById('input_db_parameter_name_add').addEventListener('keyup', onEnter(UI.Dashboard.addParameterClicked));
     document.getElementById('button_db_parameter_turn').addEventListener('click', UI.Dashboard.turnParameterClicked);
 
 //    document.getElementById('button_db_function_add').addEventListener('click', UI.Dashboard.addPrivateFunctionClicked);
@@ -68,6 +68,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('button_apply_properties').addEventListener('click', UI.Panels.StateProperties.applyPropertiesClicked);
     document.getElementById('button_close_properties').addEventListener('click', UI.Panels.StateProperties.closePropertiesClicked);
     document.getElementById('button_delete_state').addEventListener('click', UI.Panels.StateProperties.deleteStateClicked);
+
+    document.getElementById('select_container_type').addEventListener('change', UI.Panels.StateProperties.containerTypeChanged);
 
     document.getElementById('cb_display_synthesis').addEventListener('change', UI.Panels.StateProperties.displaySynthesisClicked);
     document.getElementById('button_prop_synthesize').addEventListener('click', UI.Panels.StateProperties.synthesizeClicked);
@@ -99,9 +101,13 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('button_behavior_start').addEventListener('click', UI.RuntimeControl.startBehaviorClicked);
     document.getElementById('button_behavior_params_reset').addEventListener('click', UI.RuntimeControl.resetParameterTableClicked);
 
+    document.getElementById('button_behavior_attach_external').addEventListener('click', UI.RuntimeControl.attachExternalClicked);
+
     document.getElementById('sync_bar').addEventListener('click', UI.RuntimeControl.toggleSyncExtension);
     document.getElementById('button_behavior_lock').addEventListener('click', UI.RuntimeControl.behaviorLockClicked);
     document.getElementById('selection_rc_autonomy').addEventListener('change', UI.RuntimeControl.autonomySelectionChanged);
+    document.getElementById('button_behavior_repeat').addEventListener('click', UI.RuntimeControl.repeatBehaviorClicked);
+    document.getElementById('button_behavior_pause').addEventListener('click', UI.RuntimeControl.pauseBehaviorClicked);
     document.getElementById('button_behavior_preempt').addEventListener('click', UI.RuntimeControl.preemptBehaviorClicked);
     document.getElementById('cb_allow_preempt').addEventListener('change', UI.RuntimeControl.allowPreemptClicked);
     document.getElementById('button_behavior_sync').addEventListener('click', UI.RuntimeControl.syncMirrorClicked);
@@ -119,20 +125,39 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('button_rosbridge_disconnect').addEventListener('click', UI.Settings.disconnectRosbridgeClicked);
 
     document.getElementById('input_runtime_timeout').addEventListener('blur', UI.Settings.runtimeTimeoutChanged);
+    document.getElementById('cb_stop_behaviors').addEventListener('change', UI.Settings.stopBehaviorsClicked);
 
     document.getElementById('input_package_namespace').addEventListener('change', UI.Settings.packageNamespaceChanged);
+    document.getElementById('select_code_indentation').addEventListener('change', UI.Settings.codeIndentationChanged);
     document.getElementById('select_transition_mode').addEventListener('change', UI.Settings.transitionEndpointsChanged);
     document.getElementById('input_gridsize').addEventListener('change', UI.Settings.gridsizeChanged);
+    document.getElementById('cb_commands_enabled').addEventListener('change', UI.Settings.commandsEnabledClicked);
+    document.getElementById('input_commands_key').addEventListener('change', UI.Settings.commandsKeyChanged);
+
     document.getElementById('cb_synthesis_enabled').addEventListener('change', UI.Settings.synthesisEnabledClicked);
+    document.getElementById('input_synthesis_topic').addEventListener('change', UI.Settings.synthesisTopicChanged);
+    document.getElementById('input_synthesis_type').addEventListener('change', UI.Settings.synthesisTypeChanged);
+    document.getElementById('input_synthesis_system').addEventListener('change', UI.Settings.synthesisSystemChanged);
 });
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-chrome.app.window.onClosed.addListener(function() {
+/*chrome.app.window.current().onClosed.addListener(function() {
     // no effect
     if(RC.Controller.isRunning()) {
         RC.PubSub.sendPreemptBehavior();
     }
-});
+});*/
+/*chrome.app.window.current().onbeforeunload = function (evt) {
+    if(RC.Controller.isRunning()) {
+        RC.PubSub.sendPreemptBehavior();
+    }
+}*/
+
+/*window.addEventListener('closed', function() {
+    if(RC.Controller.isRunning()) {
+        RC.PubSub.sendPreemptBehavior();
+    }
+});*/
 
 window.addEventListener('resize', function() {
     UI.Statemachine.recreateDrawingArea();
@@ -147,6 +172,10 @@ window.addEventListener('resize', function() {
 //Mousetrap.bind("ctrl+shift+v", function() { Tools.paste(); });
 
 Mousetrap.bind("k", function() { console.log("kkkk"); });
+Mousetrap.bind("esc", function() {
+    UI.Statemachine.abortTransition();
+    UI.Statemachine.removeSelection();
+});
 
 
 chrome.commands.onCommand.addListener(function(command) {

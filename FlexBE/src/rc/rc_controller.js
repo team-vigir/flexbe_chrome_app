@@ -53,8 +53,11 @@ RC.Controller = new (function() {
 	};
 	var STATE_CONFIGURATION = {
 		onEnter: function() {
+			if (vis_update_timer != undefined) clearTimeout(vis_update_timer);
+			vis_update_timer = undefined;
 			UI.Menu.displayRuntimeStatus('online');
 			UI.RuntimeControl.displayBehaviorConfiguration();
+			UI.RuntimeControl.resetPauseButton();
 			RC.Sync.setStatus("ROS", RC.Sync.STATUS_OK);
 			RC.Sync.setProgress("ROS", 1, false);
 			UI.Dashboard.unsetReadonly();
@@ -71,6 +74,8 @@ RC.Controller = new (function() {
 			if (RC.Sync.hasProcess("Switch")) RC.Sync.remove("Switch");
 			if (RC.Sync.hasProcess("Changes")) RC.Sync.remove("Changes");
 			if (RC.Sync.hasProcess("Sync")) RC.Sync.remove("Sync");
+			if (RC.Sync.hasProcess("Pause")) RC.Sync.remove("Pause");
+			if (RC.Sync.hasProcess("Repeat")) RC.Sync.remove("Repeat");
 
 			current_state_path = "";
 			locked_state_path = "";
@@ -81,12 +86,46 @@ RC.Controller = new (function() {
 		isActive: false,
 		label: "STATE_CONFIGURATION"
 	};
+	var STATE_EXTERNAL_NO_BEHAVIOR = {
+		onEnter: function() {
+			document.getElementById("selection_rc_autonomy").setAttribute("disabled", "disabled");
+			UI.RuntimeControl.displayExternalBehavior();
+			T.clearLog();
+			T.logInfo('Running behavior detected!');
+			T.logInfo('You may go to Runtime Control in order to attach and monitor execution.');
+			T.show();
+		},
+		onExit: function() {
+			document.getElementById("selection_rc_autonomy").removeAttribute("disabled", "disabled");
+		},
+		isActive: false,
+		label: "STATE_STARTING"
+	};
+	var STATE_EXTERNAL = {
+		onEnter: function() {
+			document.getElementById("selection_rc_autonomy").setAttribute("disabled", "disabled");
+			UI.RuntimeControl.displayExternalBehavior();
+			T.clearLog();
+			T.logInfo('Running behavior detected!');
+			T.logInfo('You may go to Runtime Control in order to attach and monitor execution.');
+			T.show();
+		},
+		onExit: function() {
+			if (RC.Sync.hasProcess("Attach")) RC.Sync.remove("Attach");
+			document.getElementById("selection_rc_autonomy").removeAttribute("disabled", "disabled");
+		},
+		isActive: false,
+		label: "STATE_STARTING"
+	};
 	var STATE_STARTING = {
 		onEnter: function() {
 			document.getElementById("selection_rc_autonomy").setAttribute("disabled", "disabled");
 			UI.RuntimeControl.displayWaitingForBehavior();
 			ActivityTracer.addExecution();
 			UI.Dashboard.setReadonly();
+			UI.Panels.SelectBehavior.hide();
+			UI.Panels.AddState.hide();
+			UI.Panels.StateProperties.hide();
 
 			RC.Sync.register("State", 30);
 		},
@@ -98,10 +137,18 @@ RC.Controller = new (function() {
 	};
 	var STATE_ACTIVE = {
 		onEnter: function() {
+			// repeat for external
+			ActivityTracer.addExecution();
+			UI.Dashboard.setReadonly();
+			RC.Sync.register("State", 30);
+
 			UI.Menu.displayRuntimeStatus('running');
 			UI.RuntimeControl.displayState(current_state_path);
 			UI.RuntimeControl.displayLockBehavior();
 			UI.RuntimeControl.refreshView();
+			UI.Panels.SelectBehavior.hide();
+			UI.Panels.AddState.hide();
+			UI.Panels.StateProperties.hide();
 
 			RC.Sync.setProgress("State", 1, false);
 
@@ -117,6 +164,8 @@ RC.Controller = new (function() {
 		},
 		onExit: function() {
 			if (sync_timer != undefined) clearTimeout(sync_timer);
+			if (vis_update_timer != undefined) clearTimeout(vis_update_timer);
+			vis_update_timer = undefined;
 			UI.Statemachine.refreshView();
 			RC.Sync.setProgress("State", 1, false);
 			if (RC.Sync.hasProcess("Transition")) RC.Sync.remove("Transition");
@@ -174,6 +223,24 @@ RC.Controller = new (function() {
 		current_state.onEnter();
 	}
 
+	var vis_update_timer;
+	var vis_update_required = false;
+	var vis_update = function() {
+		if (vis_update_required && that.isActive()) {
+			vis_update_required = false;
+			if (that.isRunning()) {
+				UI.RuntimeControl.displayState(current_state_path);
+				if (RC.Sync.hasProcess("State"))
+					RC.Sync.setProgress("State", 1, false);
+			}
+			console.log('update');
+			if(UI.Menu.isPageStatemachine())
+				UI.Statemachine.refreshView();
+		}
+
+		vis_update_timer = setTimeout(vis_update, 1000 / 25);
+	}
+
 	this.initialize = function() {
 		current_state = STATE_NOTHING;
 		current_state.isActive = true;
@@ -186,12 +253,14 @@ RC.Controller = new (function() {
 		hasTransition(STATE_OFFLINE, 		STATE_NOTHING);
 		hasTransition(STATE_LOCKED, 		STATE_CHANGED);
 		hasTransition(STATE_NEW_VERSION, 	STATE_CHANGED);
+		hasTransition(STATE_EXTERNAL, 		STATE_EXTERNAL_NO_BEHAVIOR);
 	}
 	this.signalBehavior = function() {
-		hasTransition(STATE_NOTHING,		STATE_OFFLINE);
-		hasTransition(STATE_NO_BEHAVIOR,	STATE_CONFIGURATION);
-		hasTransition(STATE_CHANGED,		STATE_NEW_VERSION);
-		hasTransition(STATE_CONFIGURATION,	STATE_CONFIGURATION);
+		hasTransition(STATE_NOTHING,				STATE_OFFLINE);
+		hasTransition(STATE_NO_BEHAVIOR,			STATE_CONFIGURATION);
+		hasTransition(STATE_CHANGED,				STATE_NEW_VERSION);
+		hasTransition(STATE_CONFIGURATION,			STATE_CONFIGURATION);
+		hasTransition(STATE_EXTERNAL_NO_BEHAVIOR,	STATE_EXTERNAL);
 	}
 	this.signalDisconnected = function() {
 		hasTransition(STATE_NO_BEHAVIOR,	STATE_NOTHING);
@@ -201,18 +270,25 @@ RC.Controller = new (function() {
 		hasTransition(STATE_NOTHING,	STATE_NO_BEHAVIOR);
 		hasTransition(STATE_OFFLINE,	STATE_CONFIGURATION);
 	}
+	this.signalExternal = function() {
+		hasTransition(STATE_NO_BEHAVIOR,	STATE_EXTERNAL_NO_BEHAVIOR);
+		hasTransition(STATE_CONFIGURATION,	STATE_EXTERNAL);
+	}
 	this.signalStarted = function() {
 		hasTransition(STATE_CONFIGURATION,	STATE_STARTING);
 	}
 	this.signalRunning = function() {
 		hasTransition(STATE_STARTING,		STATE_ACTIVE);
+		hasTransition(STATE_EXTERNAL,		STATE_ACTIVE);
 	}
 	this.signalFinished = function() {
-		hasTransition(STATE_ACTIVE,			STATE_CONFIGURATION);
-		hasTransition(STATE_LOCKED,			STATE_CONFIGURATION);
-		hasTransition(STATE_CHANGED,		STATE_CONFIGURATION);
-		hasTransition(STATE_NEW_VERSION,	STATE_CONFIGURATION);
-		hasTransition(STATE_STARTING,		STATE_CONFIGURATION);
+		hasTransition(STATE_ACTIVE,					STATE_CONFIGURATION);
+		hasTransition(STATE_LOCKED,					STATE_CONFIGURATION);
+		hasTransition(STATE_CHANGED,				STATE_CONFIGURATION);
+		hasTransition(STATE_NEW_VERSION,			STATE_CONFIGURATION);
+		hasTransition(STATE_STARTING,				STATE_CONFIGURATION);
+		hasTransition(STATE_EXTERNAL_NO_BEHAVIOR,	STATE_CONFIGURATION);
+		hasTransition(STATE_EXTERNAL,				STATE_CONFIGURATION);
 	}
 	this.signalLocked = function() {
 		hasTransition(STATE_ACTIVE,		STATE_LOCKED);
@@ -238,6 +314,9 @@ RC.Controller = new (function() {
 	}
 	this.isActive = function() {
 		return STATE_ACTIVE.isActive;
+	}
+	this.isExternal = function() {
+		return STATE_EXTERNAL.isActive || STATE_EXTERNAL_NO_BEHAVIOR.isActive;
 	}
 	this.isLocked = function() {
 		return STATE_LOCKED.isActive || STATE_CHANGED.isActive || STATE_NEW_VERSION.isActive;
@@ -266,13 +345,8 @@ RC.Controller = new (function() {
 	this.setCurrentStatePath = function(state_path) {
 		current_state_path = state_path;
 
-		if (that.isRunning()) {
-			UI.RuntimeControl.displayState(current_state_path);
-			if (RC.Sync.hasProcess("State"))
-				RC.Sync.setProgress("State", 1, false);
-		}
-
-		UI.Statemachine.refreshView();
+		vis_update_required = true;
+		if (vis_update_timer == undefined) vis_update();
 	}
 
 	this.setLockedStatePath = function(state_path) {

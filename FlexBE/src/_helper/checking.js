@@ -9,12 +9,27 @@ Checking = new (function() {
 
 	this.checkBehavior = function() {
 		var error = that.checkDashboard();
-		if (error != undefined) return error;
+		if (error != undefined) {
+			UI.Menu.toDashboardClicked();
+			return error;
+		}
 
 		error = that.checkStatemachine();
-		if (error != undefined) return error;
+		if (error != undefined) {
+			UI.Menu.toStatemachineClicked();
+			return error;
+		}
 
 		return undefined;
+	}
+
+	this.warnBehavior = function() {
+		var warnings = [];
+
+		warnings.push.apply(warnings, that.warnDashboard());
+		warnings.push.apply(warnings, that.warnStatemachine());
+
+		return warnings;
 	}
 
 	this.checkDashboard = function() {
@@ -55,9 +70,6 @@ Checking = new (function() {
 				if (p.additional.length == 0) return "enum parameter " + p.name + " has no options to choose from";
 				if (!p.additional.contains(p.default)) return "enum parameter " + p.name + " has illegal default value: " + p.default;
 			}
-			if (p.type == 'yaml') {
-				if (p.additional.key == "") return "yaml paramter " + p.name + " needs key specification";
-			}
 		}
 
 		// interface
@@ -82,6 +94,14 @@ Checking = new (function() {
 		return undefined;
 	}
 
+	this.warnDashboard = function() {
+		var warnings = [];
+		if (Behavior.getCreationDate() == "") warnings.push("behavior creation date is not set");
+		if (Behavior.getTags() == "") warnings.push("behavior has no tags for quicker access");
+
+		return warnings;
+	}
+
 	this.checkStatemachine = function() {
 		error = that.checkSingleStatemachine(Behavior.getStatemachine());
 		if (error != undefined) return error;
@@ -89,14 +109,24 @@ Checking = new (function() {
 		return undefined;
 	}
 
+	this.warnStatemachine = function() {
+		return that.warnSingleStatemachine(Behavior.getStatemachine());
+	}
+
 
 	this.checkSingleStatemachine = function(statemachine) {
 		statemachine.updateDataflow(); // also required by state checking
 
 		var states = statemachine.getStates();
-		if (states.length == 0) return "state machine " + statemachine.getStatePath() + " contains no states";
+		if (states.length == 0) {
+			UI.Statemachine.setDisplayedSM(statemachine);
+			return "state machine " + statemachine.getStatePath() + " contains no states";
+		}
 
-		if (statemachine.getInitialState() == undefined) return "state machine " + statemachine.getStatePath() + " has no initial state";
+		if (statemachine.getInitialState() == undefined) {
+			UI.Statemachine.setDisplayedSM(statemachine);
+			return "state machine " + statemachine.getStatePath() + " has no initial state";
+		}
 
 		for (var i = 0; i < states.length; i++) {
 			var error_string = undefined;
@@ -108,10 +138,28 @@ Checking = new (function() {
 			error_string = that.checkSingleState(states[i]);
 			// do not have to perform inner checks on embedded behaviors (-> readonly)
 
-			if (error_string != undefined) return error_string;
+			if (error_string != undefined)  {
+				UI.Statemachine.setDisplayedSM(statemachine);
+				return error_string;
+			}
 		}
 
-/* too strict, better use as warning
+		return undefined
+	}
+
+
+	this.warnSingleStatemachine = function(statemachine) {
+		var warnings = [];
+		statemachine.updateDataflow(); // also required by state checking
+
+		var states = statemachine.getStates();
+		for (var i = 0; i < states.length; i++) {
+			if (states[i] instanceof Statemachine) {
+				warnings.push.apply(warnings, that.warnSingleStatemachine(states[i]));
+			}
+			warnings.push.apply(warnings, that.warnSingleState(states[i]));
+		}
+
 		// check output dataflow
 		var dataflow = statemachine.getDataflow();
 		for (var i = 0; i < dataflow.length; i++) {
@@ -120,11 +168,11 @@ Checking = new (function() {
 			if (statemachine.getStateName() == "") {
 				available_userdata = available_userdata.concat(Behavior.getDefaultUserdata().map(function(el) { return el.key; }));
 			}
-			if (d.getTo().getStateClass() == ":OUTCOME" && d.getFrom().getStateName() == "INIT" && !available_userdata.contains(d.getOutcome()))
-				return "state machine " + statemachine.getStatePath() + " has undefined userdata for output key " + d.getOutcome() + " at outcome " + d.getTo().getStateName();
+			if ((d.getTo().getStateClass() == ":OUTCOME" || d.getTo().getStateClass() == ":CONDITION") && d.getFrom().getStateName() == "INIT" && !available_userdata.contains(d.getOutcome()))
+				warnings.push("container " + statemachine.getStatePath() + " has undefined userdata for output key " + d.getOutcome() + " at outcome " + d.getTo().getStateName());
 		}
-*/
-		return undefined
+
+		return warnings;
 	}
 
 	this.checkSingleState = function(state) {
@@ -166,15 +214,43 @@ Checking = new (function() {
 			if (state.getContainer().getStateName() == "") {
 				available_userdata = available_userdata.concat(Behavior.getDefaultUserdata().map(function(el) { return el.key; }));
 			}
-			if (!available_userdata.contains(sm_dataflow[i].getOutcome()))
+			if (!available_userdata.contains(sm_dataflow[i].getOutcome())) {
+				if (!UI.Statemachine.isDataflow()) UI.Statemachine.toggleDataflow();
 				return "input key " + sm_dataflow[i].getOutcome() + " of state " + state.getStatePath() + " could be undefined";
+			}
 		}
 
 		// outcomes
 		if (state.getOutcomesUnconnected().length > 0) return "outcome " + state.getOutcomesUnconnected()[0] + " of state " + state.getStatePath() + " is unconnected";
+		if (state.getContainer().isConcurrent()) {
+			var outcome_target_list = [];
+			var error_string = undefined;
+			oc_transitions = state.getContainer().getTransitions().filter(function(t) {
+				return t.getFrom().getStateName() == state.getStateName()
+					&& t.getTo().getStateClass() == ":CONDITION";
+			});
+			oc_transitions.forEach(function(t) {
+				if (outcome_target_list.contains(t.getTo().getStateName())) {
+					error_string = "multiple outcomes of state " + state.getStateName() + " point to the same outcome of a concurrency container";
+				} else {
+					outcome_target_list.push(t.getTo().getStateName());
+				}
+			});
+			if (error_string != undefined) return error_string;
+		}
+	}
+
+	this.warnSingleState = function(state) {
+		var warnings = [];
+
+		// unused output keys
+
+		return warnings;
 	}
 
 	this.isValidExpressionSyntax = function(expr, allow_comment) {
+		if (expr.length == 0) return false;
+
 		var opening = ['(', '[', '{', '"', "'"];
 		var closing = [')', ']', '}', '"', "'"];
 

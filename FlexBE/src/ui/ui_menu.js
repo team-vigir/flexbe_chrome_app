@@ -27,9 +27,9 @@ UI.Menu = new (function() {
 	];
 	var button_config_sm = [
 		[
-			["Add State", "title_add", function() { UI.Menu.addStateClicked(); }],
-			["Add Behavior", "title_add", function() { UI.Menu.addBehaviorClicked(); }],
-			["Add State Machine", "title_add", function() { UI.Menu.addStatemachineClicked(); }]
+			["Add State", "add", function() { UI.Menu.addStateClicked(); }],
+			["Add Behavior", "add", function() { UI.Menu.addBehaviorClicked(); }],
+			["Add Container", "add", function() { UI.Menu.addStatemachineClicked(); }]
 		],
 		[
 			["Data Flow Graph", "dataflow", function() { UI.Statemachine.toggleDataflow(); }],
@@ -42,8 +42,13 @@ UI.Menu = new (function() {
 			["Reset", "cross", function() { ActivityTracer.resetToSave(); }]
 		],
 		[
-			["Write Comment", "note_add", function() { UI.Menu.addCommentClicked(); }],
-			["Toggle Comments", "note", function() { UI.Statemachine.toggleComments(); }]
+			["Hide Comments", "note", function() { UI.Statemachine.toggleComments(); }],
+			["Write Comment", "note_add", function() { UI.Menu.addCommentClicked(); }]
+		],
+		[
+			["Fade Outcomes", "outcome", function() { UI.Statemachine.toggleOutcomes(); }],
+			["Auto-Connect", "autoconnect", function() { Tools.autoconnect(); }],
+			["Group Selection", "group_selection", function() { Tools.groupSelection(); }]
 		]
 	];
 	var button_config_rc = [
@@ -56,8 +61,8 @@ UI.Menu = new (function() {
 			["Show Terminal", "title_terminal", function() { UI.Menu.terminalClicked(); }]
 		],
 		[
-			["Connect to ROS", "link", function() { UI.Settings.connectRosbridgeClicked(); }],
-			["Disconnect from ROS", "link_break", function() { UI.Settings.disconnectRosbridgeClicked(); }]
+			["Import Configuration", "settings_import", function() { UI.Settings.importConfiguration(); }],
+			["Export Configuration", "settings_export", function() { UI.Settings.exportConfiguration(); }]
 		]
 	];
 
@@ -76,6 +81,7 @@ UI.Menu = new (function() {
 				tr = document.createElement("tr");
 				td = document.createElement("td");
 				td.setAttribute("class", "tool_button");
+				td.setAttribute("id", "tool_button " + button[0]);
 				td.innerHTML = 
 					'<table cellpadding="0" cellspacing="0"><tr><td valign="middle">' +
 						'<img src="img/' + button[1] + '.png" />' +
@@ -134,21 +140,6 @@ UI.Menu = new (function() {
 		setMenuButtons(button_config_se);
 	}
 
-	this.expandDevbanner = function() {
-		var banner = document.getElementById("devbanner");
-		banner.innerHTML = "<h2>Early Development Version</h2>" +
-			"Please handle with care and report any issues you encounter so I can consider them for future improvements. Thank you!<br />" +
-			"<br />" + 
-			"<h2>Current State</h2>" + 
-			"Don't execute unsaved behaviors and don't modify behaviors during execution even if possible.";
-	}
-
-	this.shrinkDevbanner = function() {
-		var banner = document.getElementById("devbanner");
-		banner.innerHTML = "<h2>Early Development Version</h2>" +
-			"Please hover here for further information.";
-	}
-
 	this.displayRuntimeStatus = function(status) {
 		txt = document.getElementById("runtime_status_txt");
 		txt.innerHTML = status;
@@ -181,6 +172,7 @@ UI.Menu = new (function() {
 				if (smi.class_name != manifest.class_name) T.logWarn("Class names of behavior " + manifest.name + " do not match!");
 				var be_def = Behaviorlib.getByName(manifest.name);
 				var be = new BehaviorState(manifest.name, be_def);
+				be.setStateName(Tools.getUniqueName(UI.Statemachine.getDisplayedSM(), be.getStateName()));
 				UI.Statemachine.getDisplayedSM().addState(be);
 				UI.Statemachine.refreshView();
 				UI.Panels.StateProperties.displayStateProperties(be);
@@ -214,20 +206,8 @@ UI.Menu = new (function() {
 	this.addStatemachineClicked = function() {
 		if (UI.Statemachine.isReadonly()) return;
 
-		// for testing
 		var sm_def = new StateMachineDefinition(['finished', 'failed'], [], []);
-		var sm_name_pattern = /Statemachine(?:_(\d+))?/i;
-		var current_sm_list = UI.Statemachine.getDisplayedSM().getStates();
-		current_sm_list = current_sm_list.map(function(element) {
-			var result = element.getStateName().match(sm_name_pattern);
-			if (result == null) return 0;
-			if (result[1] == undefined) return 1;
-			return parseInt(result[1]);
-		});
-		var new_index = current_sm_list.reduce(function(prev, cur) {
-			return prev > cur? prev : cur;
-		}, 0) + 1;
-		var state_name = "Statemachine" + ((new_index>1)? "_" + new_index : "");
+		var state_name = Tools.getUniqueName(UI.Statemachine.getDisplayedSM(), "Container");
 		var sm = new Statemachine(state_name, sm_def);
 		UI.Statemachine.getDisplayedSM().addState(sm);
 		UI.Statemachine.refreshView();
@@ -237,9 +217,12 @@ UI.Menu = new (function() {
 		var container_path = sm.getContainer().getStatePath();
 
 		ActivityTracer.addActivity(ActivityTracer.ACT_STATE_ADD,
-			"Added new state machine",
+			"Added new container",
 			function() {
 				var state = Behavior.getStatemachine().getStateByPath(state_path);
+				if (UI.Statemachine.getDisplayedSM().getStatePath() == state.getStatePath()) {
+					UI.Statemachine.setDisplayedSM(state.getContainer());
+				}
 				state.getContainer().removeState(state);
 				if (UI.Panels.StateProperties.isCurrentState(state)) {
 					UI.Panels.StateProperties.hide();
@@ -269,7 +252,11 @@ UI.Menu = new (function() {
 			T.logError("Unable to save behavior: " + check_error_string);
 			return;
 		}
+		var warnings = Checking.warnBehavior();
 		BehaviorSaver.saveStateMachine();
+		warnings.forEach(function(w) {
+			T.logWarn("Warning: " + w);
+		});
 		ActivityTracer.addSave();
 	}
 
@@ -316,10 +303,14 @@ UI.Menu = new (function() {
 		if (error_string != undefined) {
 			T.logError("Found error: " + error_string);
 		} else {
+			// generate warnings
+			var warnings = Checking.warnBehavior();
+			warnings.forEach(function(w) {
+				T.logWarn("Warning: " + w);
+			});
+
 			T.logInfo("Behavior is valid!");
 		}
-
-		// generate warnings
 	}
 
 	this.addCommentClicked = function() {
